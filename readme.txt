@@ -1,0 +1,1 @@
+Loyiha Muxlisaga tegishli
