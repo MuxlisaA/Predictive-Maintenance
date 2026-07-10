@@ -6,6 +6,7 @@ muhit o'zgaruvchisidan olinadi (markaziy PostgreSQL uchun), masalan:
 O'rnatilmagan bo'lsa — loyiha papkasidagi lokal SQLite fayl ishlatiladi
 (qaysi papkadan ishga tushirilganidan qat'i nazar, yo'l absolyut).
 """
+import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -42,6 +43,21 @@ measurements = Table(
     Column("bearing_name", String),
     Column("rms", Float),
     Column("status", String),
+)
+
+# On-device FFT dan kelgan chastota spektrlari.
+# bins — JSON ro'yxat: i-bin chastotasi = i * sample_rate / (2 * len(bins))
+# timestamp — kollektor (datchik mashinasi) soati; received_at — server soati.
+# Yangilik tekshiruvi received_at bo'yicha: ikki mashina soati farq qilsa ham
+# tashxis adashmaydi.
+spectra = Table(
+    "spectra", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("timestamp", DateTime),
+    Column("received_at", DateTime),
+    Column("bearing_name", String),
+    Column("sample_rate", Float),
+    Column("bins", String),
 )
 
 
@@ -94,6 +110,42 @@ def get_by_date(bearing_name, day):
              .where(measurements.c.timestamp < end)
              .order_by(measurements.c.timestamp))
     return pd.read_sql(query, engine)
+
+
+def insert_spectrum(bearing_name, sample_rate, bins, timestamp=None):
+    with engine.begin() as conn:
+        conn.execute(spectra.insert().values(
+            timestamp=timestamp or datetime.now(),
+            received_at=datetime.now(),
+            bearing_name=bearing_name,
+            sample_rate=sample_rate,
+            bins=json.dumps(bins),
+        ))
+
+
+def _as_datetime(value):
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return value
+
+
+def get_latest_spectrum(bearing_name):
+    """Oxirgi spektr: {'timestamp', 'received_at', 'sample_rate', 'bins'}
+    yoki None."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(spectra.c.timestamp, spectra.c.received_at,
+                   spectra.c.sample_rate, spectra.c.bins)
+            .where(spectra.c.bearing_name == bearing_name)
+            .order_by(spectra.c.id.desc())
+            .limit(1)
+        ).first()
+    if row is None:
+        return None
+    return {"timestamp": _as_datetime(row.timestamp),
+            "received_at": _as_datetime(row.received_at or row.timestamp),
+            "sample_rate": row.sample_rate,
+            "bins": json.loads(row.bins)}
 
 
 def get_last_date(bearing_name):

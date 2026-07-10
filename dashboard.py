@@ -1,11 +1,16 @@
+from datetime import datetime
+
 import altair as alt
 import pandas as pd
 import streamlit as st
 
+from analysis import diagnose
 from database import (ALARM_THRESHOLD, get_by_date, get_last_date,
-                      get_latest, get_recent, init_db)
+                      get_latest, get_latest_spectrum, get_recent, init_db)
 
 init_db()
+
+SPECTRUM_MAX_AGE = 600  # soniya — bundan eski spektr bo'yicha tashxis berilmaydi
 
 
 @st.fragment(run_every="1s")
@@ -29,6 +34,32 @@ def render_realtime(bearing_name):
                 tooltip=['timestamp', 'rms']
             ).properties(height=400)
             st.altair_chart(chart, use_container_width=True)
+
+        # FFT spektri (firmware yuborsa) + tashxis
+        spec = get_latest_spectrum(bearing_name)
+        if spec:
+            m = len(spec['bins'])
+            freqs = [i * spec['sample_rate'] / (2 * m) for i in range(m)]
+            sdf = pd.DataFrame({"chastota": freqs, "amplituda": spec['bins']})
+            st.markdown("#### 🎛 Chastota spektri (FFT)")
+            spec_chart = alt.Chart(sdf).mark_bar().encode(
+                x=alt.X('chastota:Q', title='Chastota (Hz)'),
+                y=alt.Y('amplituda:Q', title='Amplituda'),
+                tooltip=[alt.Tooltip('chastota:Q', title='Hz', format='.0f'),
+                         alt.Tooltip('amplituda:Q', title='Amplituda', format='.4f')]
+            ).properties(height=250)
+            st.altair_chart(spec_chart, use_container_width=True)
+            age = (datetime.now() - spec['received_at']).total_seconds()
+            if age < SPECTRUM_MAX_AGE:
+                diag = diagnose(spec['bins'], spec['sample_rate'])
+                if diag:
+                    st.info(f"🩺 Tashxis: {diag}")
+                st.caption(f"Spektr vaqti: {spec['timestamp'].strftime('%H:%M:%S')}")
+            else:
+                # Eski spektr bo'yicha tashxis chalg'itadi — faqat ogohlantirish
+                st.caption("⚠️ Spektr eski (oxirgisi: "
+                           f"{spec['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}) — "
+                           "tashxis ko'rsatilmaydi")
     else:
         st.warning("Ma'lumot topilmadi.")
 
@@ -71,8 +102,13 @@ with tab2:
                 # Kunni 24 ta soatga bo'lamiz: har bir soat uchun o'rtacha RMS.
                 # Butun kun ko'rinishi uchun 24 ta soat (00:00–23:00) o'qda
                 # qoladi, ma'lumot bo'lmagan soatlar bo'sh slot bo'lib turadi.
+                # Ikki bosqichli o'rtacha (daqiqa -> soat): normal rejimda
+                # daqiqasiga 1 agregat, ALARM'da sekundiga ~8 xom qator
+                # keladi — to'g'ridan-to'g'ri soatlik mean ALARM qatorlarini
+                # og'irroq tortib yuborardi.
                 hourly = (df.set_index('timestamp')[['rms']]
-                            .resample('h').mean().reset_index())
+                            .resample('min').mean()
+                            .resample('h').mean().dropna().reset_index())
                 hourly['soat'] = hourly['timestamp'].dt.strftime('%H:00')
                 all_hours = [f"{h:02d}:00" for h in range(24)]
                 chart = alt.Chart(hourly).mark_bar().encode(
