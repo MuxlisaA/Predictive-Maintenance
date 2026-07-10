@@ -1,60 +1,27 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
 import altair as alt
-from datetime import datetime
+import pandas as pd
+import streamlit as st
 
-def get_data_by_date(bearing_name, selected_date):
-    conn = sqlite3.connect('vibration.db')
-    date_str = selected_date.strftime('%Y-%m-%d')
-    query = "SELECT timestamp, rms FROM measurements WHERE bearing_name = ? AND timestamp LIKE ?"
-    df = pd.read_sql_query(query, conn, params=[bearing_name, f"{date_str}%"])
-    conn.close()
-    return df
-# 1. FUNKSIYALARNI SHU YERGA YOZING (Bular sizda bor edi)
-def get_latest_metrics(bearing_name):
-    conn = sqlite3.connect('vibration.db')
-    query = "SELECT rms, status, timestamp FROM measurements WHERE bearing_name = ? ORDER BY id DESC LIMIT 1"
-    df = pd.read_sql_query(query, conn, params=[bearing_name])
-    conn.close()
-    return df.iloc[0] if not df.empty else None
+from database import (ALARM_THRESHOLD, get_by_date, get_last_date,
+                      get_latest, get_recent, init_db)
 
-def get_graph_data(bearing_name):
-    conn = sqlite3.connect('vibration.db')
-    query = "SELECT timestamp, rms FROM measurements WHERE bearing_name = ? ORDER BY id DESC LIMIT 50"
-    df = pd.read_sql_query(query, conn, params=[bearing_name])
-    conn.close()
-    if not df.empty:
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        return df.sort_values('timestamp')
-    return pd.DataFrame()
-
-
-def get_last_date(bearing_name):
-    """Tanlangan uskuna bo'yicha oxirgi yozuv sanasi (default sana uchun).
-    Ma'lumot bo'lmasa — bugungi sana."""
-    conn = sqlite3.connect('vibration.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT MAX(timestamp) FROM measurements WHERE bearing_name = ?", (bearing_name,))
-    row = cursor.fetchone()
-    conn.close()
-    if row and row[0]:
-        return datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").date()
-    return datetime.now().date()
+init_db()
 
 
 @st.fragment(run_every="1s")
 def render_realtime(bearing_name):
     """Real-vaqt panel. st.fragment tufayli FAQAT shu blok har soniyada
     yangilanadi — butun sahifa (va tab2 hisobotlari) qayta yuklanmaydi."""
-    latest = get_latest_metrics(bearing_name)
+    latest = get_latest(bearing_name)
     if latest is not None:
         col1, col2, col3 = st.columns(3)
-        col1.metric("USKUNA HOLATI", "🚨 ALARM" if latest['rms'] > 0.55 else "✅ OK")
+        col1.metric("USKUNA HOLATI",
+                    "🚨 ALARM" if latest['rms'] > ALARM_THRESHOLD else "✅ OK")
         col2.metric("TEBRANISH (RMS)", f"{latest['rms']:.4f} g")
-        col3.metric("OXIRGI YANGILANISH", pd.to_datetime(latest['timestamp']).strftime('%H:%M:%S'))
+        col3.metric("OXIRGI YANGILANISH",
+                    pd.to_datetime(latest['timestamp']).strftime('%H:%M:%S'))
 
-        chart_data = get_graph_data(bearing_name)
+        chart_data = get_recent(bearing_name)
         if not chart_data.empty:
             chart = alt.Chart(chart_data).mark_line(point=True).encode(
                 x=alt.X('timestamp:T', axis=alt.Axis(format='%H:%M:%S', title='Vaqt')),
@@ -70,7 +37,7 @@ def render_realtime(bearing_name):
 st.set_page_config(page_title="Predictive Maintenance", layout="wide")
 
 st.sidebar.markdown("## ⚙️ Boshqaruv Paneli")
-selected_bearing = st.sidebar.radio("Qurilmani tanlang:", 
+selected_bearing = st.sidebar.radio("Qurilmani tanlang:",
     ["Bearing 1 (Main Drive)", "Bearing 2 (Fan)", "Bearing 3 (Pump)", "Bearing 4 (Motor)"], index=3)
 
 st.markdown(f"# 📊 {selected_bearing} Monitoringi")
@@ -87,15 +54,14 @@ with tab1:
 
 with tab2:
     st.markdown("### 🔍 Tarixiy va Davriy Tahlil")
-    
+
     col_s1, col_s2, col_s3 = st.columns(3)
     period = col_s1.selectbox("Davriylik:", ["Kunlik", "Haftalik", "Oylik", "Yillik"], key="period_key")
     search_date = col_s2.date_input("Sanani tanlang:", value=get_last_date(selected_bearing), key="date_key")
-    
+
     if col_s3.button("Hisobotni ko'rsatish"):
-        # Funksiyani chaqiramiz
-        df = get_data_by_date(selected_bearing, search_date)
-        
+        df = get_by_date(selected_bearing, search_date)
+
         # Agar df bo'sh bo'lsa, bazada aynan shu sana va nomda yozuv yo'q
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp'])
