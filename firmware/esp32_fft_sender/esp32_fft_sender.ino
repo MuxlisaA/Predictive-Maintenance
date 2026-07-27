@@ -24,6 +24,18 @@
  * Kutubxona: "arduinoFFT" (Library Manager dan, v2.x).
  * !!! readAccel() ni O'Z SENSORINGIZGA moslang (pastda MPU6050 misoli).
  */
+
+ #include <WiFi.h>
+#include <HTTPClient.h>
+
+const char* ssid = "MUV-1";       // Zavodagi Wi-Fi nomi
+const char* password = "MUV2025!2026";  // Wi-Fi paroli
+const char* serverUrl = "http://SERVER_IP_MANZILI:8000/api/vibration"; // main.py ishlayotgan kompyuter yoki server IP-si
+const char* spectrumUrl = "http://SERVER_IP_MANZILI:8000/api/spectrum";
+const char* apiKey = "API_KEY";      // main.py dagi API_KEY bilan bir xil bo'lishi kerak
+const char* bearingName = "Bearing 4";         // Ushbu sensor o'rnatilganuskuna/podshivnik nomi
+
+
 #include <arduinoFFT.h>
 
 #define SAMPLES            256           // FFT o'lchami (2 ning darajasi)
@@ -49,9 +61,25 @@ void readAccel(double &x, double &y, double &z) {
 }
 // ---------------------------------------------------------------------------
 
+// void setup() {
+//   Serial.begin(115200);
+//   samplePeriodUs = round(1000000.0 / SAMPLING_FREQUENCY);
+// }
+
 void setup() {
   Serial.begin(115200);
   samplePeriodUs = round(1000000.0 / SAMPLING_FREQUENCY);
+
+  // Wi-Fi ga ulanishni qo'shamiz
+  WiFi.begin(ssid, password);
+  Serial.print("Wi-Fi ga ulanmoqda");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi ulandi!");
+  Serial.print("IP manzil: ");
+  Serial.println(WiFi.localIP());
 }
 
 void loop() {
